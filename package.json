@@ -1,21 +1,37 @@
 {
-  "name": "discord-clone",
+  "name": "diskurt",
   "version": "1.0.0",
-  "description": "A Discord-like chat app with WebRTC features",
-  "main": "server.js",
+  "description": "Real-time communication platform with voice, video, and chat",
+  "main": "server/index.js",
   "scripts": {
-    "start": "node startup.js",
-    "dev": "nodemon server.js",
-    "prestart": "npm install"
+    "start": "node server/index.js",
+    "server": "nodemon server/index.js",
+    "client": "cd client && npm start",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "cd client && npm run build",
+    "install:all": "npm install && cd client && npm install"
+  },
+  "keywords": [
+    "webrtc",
+    "chat",
+    "video",
+    "real-time",
+    "socket.io"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "nodemon": "^3.0.1"
   },
   "engines": {
     "node": ">=14.0.0"
-  },
-  "dependencies": {
-    "express": "^4.18.2",
-    "socket.io": "^4.7.2"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
   }
 } 
