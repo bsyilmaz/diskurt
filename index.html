@@ -6,22 +6,23 @@
     <title>Discord Clone</title>
     <link rel="stylesheet" href="style.css">
     <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
     <div id="login-container">
+        <img src="https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png" alt="Discord Logo" class="logo">
         <h2>Discord Clone</h2>
-        <input type="text" id="username" placeholder="Your Name">
+        <input type="text" id="username" placeholder="Your Username">
         <input type="text" id="room-name" placeholder="Room Name">
-        <input type="password" id="password" placeholder="Password">
+        <input type="password" id="password" placeholder="Room Password">
         <button id="login-button">Enter Room</button>
     </div>
 
     <div id="chat-container" style="display: none;">
         <div id="room-info">
             <h2 id="chat-room-name">Room</h2>
-            <div id="online-users">
-                <h3>Users Online</h3>
-                <ul id="users-list"></ul>
+            <div id="room-controls">
+                <button id="toggle-users-button" title="Toggle Users List"><i class="fas fa-users"></i></button>
             </div>
         </div>
         
@@ -32,23 +33,35 @@
                 </div>
                 <div id="input-area">
                     <input type="text" id="message-input" placeholder="Type a message...">
-                    <button id="send-button">Send</button>
+                    <button id="send-button"><i class="fas fa-paper-plane"></i></button>
                 </div>
             </div>
             
             <div id="media-container">
-                <div id="video-grid"></div>
+                <div id="video-grid">
+                    <!-- Video streams will appear here -->
+                </div>
                 <div id="controls">
                     <button id="speak-button" class="media-button">
-                        <span class="button-icon">🎤</span> Voice
+                        <span class="button-icon"><i class="fas fa-microphone"></i></span>
+                        <span>Voice</span>
                     </button>
                     <button id="video-button" class="media-button">
-                        <span class="button-icon">📹</span> Video
+                        <span class="button-icon"><i class="fas fa-video"></i></span>
+                        <span>Video</span>
                     </button>
                     <button id="share-screen-button" class="media-button">
-                        <span class="button-icon">📺</span> Share Screen
+                        <span class="button-icon"><i class="fas fa-desktop"></i></span>
+                        <span>Screen</span>
                     </button>
                 </div>
+            </div>
+            
+            <div id="online-users">
+                <h3>Online Users</h3>
+                <ul id="users-list">
+                    <!-- Online users will appear here -->
+                </ul>
             </div>
         </div>
     </div>
@@ -56,9 +69,10 @@
     <div id="media-templates" style="display: none;">
         <div class="video-container" id="video-container-template">
             <video class="user-video" autoplay playsinline></video>
-            <div class="user-name"></div>
+            <div class="user-name">Username</div>
             <div class="video-controls">
-                <button class="mute-button">🔇</button>
+                <button class="mute-button" title="Mute/Unmute"><i class="fas fa-volume-up"></i></button>
+                <button class="fullscreen-button" title="Fullscreen"><i class="fas fa-expand"></i></button>
             </div>
         </div>
     </div>

@@ -16,10 +16,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const usersList = document.getElementById('users-list');
     const videoGrid = document.getElementById('video-grid');
     const videoTemplate = document.getElementById('video-container-template');
+    const toggleUsersButton = document.getElementById('toggle-users-button');
+    const onlineUsersPanel = document.getElementById('online-users');
 
     // Socket.io connection
     let socket;
     
+    // Toggle users panel
+    toggleUsersButton.addEventListener('click', () => {
+        const mainContent = document.getElementById('main-content');
+        
+        if (onlineUsersPanel.style.display === 'none') {
+            onlineUsersPanel.style.display = 'block';
+            toggleUsersButton.innerHTML = '<i class="fas fa-users"></i>';
+            toggleUsersButton.classList.add('active');
+        } else {
+            onlineUsersPanel.style.display = 'none';
+            toggleUsersButton.innerHTML = '<i class="fas fa-users"></i>';
+            toggleUsersButton.classList.remove('active');
+        }
+    });
+    
+    // Initialize panel state
+    onlineUsersPanel.style.display = 'block';
+
     // WebRTC variables
     let localStream;
     let localVideoStream;
@@ -29,7 +49,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const mediaConstraints = {
         audio: {
             echoCancellation: true,
-            noiseSuppression: true
+            noiseSuppression: true,
+            autoGainControl: true
         },
         video: {
             width: { ideal: 1280 },
@@ -45,22 +66,42 @@ document.addEventListener('DOMContentLoaded', () => {
     let isVideoEnabled = false;
     let isScreenSharing = false;
 
-    // ICE servers config for WebRTC
+    // ICE servers config for WebRTC - improved with more STUN/TURN servers
     const iceConfig = {
         iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-        ]
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            // Fallback public TURN servers (limited usage)
+            {
+                urls: 'turn:numb.viagenie.ca',
+                credential: 'muazkh',
+                username: 'webrtc@live.com'
+            },
+            {
+                urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+                credential: 'webrtc',
+                username: 'webrtc'
+            }
+        ],
+        iceCandidatePoolSize: 10
     };
+
+    // Check if we're on HTTPS
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+        addSystemMessage('Warning: WebRTC requires HTTPS for production use. Video/audio may not work.');
+    }
 
     // Initialize login process
     loginButton.addEventListener('click', () => {
-        const username = usernameInput.value.trim();
+        const username = usernameInput.value.trim() || 'User-' + Math.floor(Math.random() * 1000);
         const room = roomNameInput.value.trim();
         const password = passwordInput.value.trim();
 
-        if (!username || !room || !password) {
-            alert('Please enter your name, a room name, and a password.');
+        if (!room || !password) {
+            alert('Please enter a room name and password.');
             return;
         }
 
@@ -94,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket = io();
         
         // Join the chat room
-        socket.emit('join-room', currentRoom);
+        socket.emit('join-room', currentRoom, currentUser);
         chatRoomName.textContent = `Room: ${currentRoom}`;
 
         // Set up socket event handlers
@@ -107,17 +148,25 @@ document.addEventListener('DOMContentLoaded', () => {
         loginContainer.style.display = 'none';
         chatContainer.style.display = 'flex';
         messageInput.focus();
+        
+        // Show welcome message
+        addSystemMessage(`Welcome to ${currentRoom}! You are logged in as ${currentUser}.`);
     }
 
     // Set up Socket.io event listeners
     function setupSocketListeners() {
-        socket.on('user-joined', (userId) => {
-            console.log(`User joined: ${userId}`);
-            addUserToList(userId, 'Unknown User'); // We don't know their name yet
+        socket.on('user-joined', (userData) => {
+            console.log(`User joined:`, userData);
+            
+            // Add user to the list with their username
+            addUserToList(userData.id, userData.username);
+            
+            // Display system message
+            addSystemMessage(`${userData.username} joined the room.`);
             
             // If we have a media stream, send an offer to the new user
             if (localStream || localVideoStream) {
-                createPeerConnection(userId);
+                createPeerConnection(userData.id);
             }
         });
 
@@ -129,7 +178,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         socket.on('user-disconnected', (userId) => {
-            console.log(`User disconnected: ${userId}`);
+            const username = peers[userId] || userId;
+            console.log(`User disconnected: ${userId} (${username})`);
+            
+            // Display system message
+            addSystemMessage(`${username} left the room.`);
+            
+            // Remove from UI and connections
             removeUserFromList(userId);
             closePeerConnection(userId);
         });
@@ -141,29 +196,41 @@ document.addEventListener('DOMContentLoaded', () => {
         // WebRTC signaling
         socket.on('offer', async (offer, fromUserId) => {
             console.log(`Received offer from ${fromUserId}`);
-            if (!peerConnections[fromUserId]) {
-                createPeerConnection(fromUserId);
+            try {
+                if (!peerConnections[fromUserId]) {
+                    createPeerConnection(fromUserId);
+                }
+                const pc = peerConnections[fromUserId];
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('answer', answer, fromUserId);
+            } catch (error) {
+                console.error('Error handling offer:', error);
             }
-            const pc = peerConnections[fromUserId];
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            socket.emit('answer', answer, fromUserId);
         });
         
         socket.on('answer', async (answer, fromUserId) => {
             console.log(`Received answer from ${fromUserId}`);
-            const pc = peerConnections[fromUserId];
-            if (pc) {
-                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            try {
+                const pc = peerConnections[fromUserId];
+                if (pc) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                }
+            } catch (error) {
+                console.error('Error handling answer:', error);
             }
         });
         
         socket.on('ice-candidate', async (candidate, fromUserId) => {
             console.log(`Received ICE candidate from ${fromUserId}`);
-            const pc = peerConnections[fromUserId];
-            if (pc) {
-                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            try {
+                const pc = peerConnections[fromUserId];
+                if (pc) {
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                }
+            } catch (error) {
+                console.error('Error adding received ice candidate:', error);
             }
         });
     }
@@ -184,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    // Create a WebRTC peer connection to another user
+    // Create a WebRTC peer connection to another user - improved connection handling
     function createPeerConnection(userId) {
         if (peerConnections[userId]) return;
         
@@ -192,22 +259,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const pc = new RTCPeerConnection(iceConfig);
         peerConnections[userId] = pc;
         
-        // Add our media tracks to the connection
+        // Add our media tracks to the connection with more reliable method
+        let localTracks = [];
+        
         if (localStream) {
             localStream.getTracks().forEach(track => {
-                pc.addTrack(track, localStream);
+                const sender = pc.addTrack(track, localStream);
+                localTracks.push(sender);
             });
         }
         
         if (localVideoStream) {
             localVideoStream.getTracks().forEach(track => {
-                pc.addTrack(track, localVideoStream);
+                const sender = pc.addTrack(track, localVideoStream);
+                localTracks.push(sender);
             });
         }
         
         if (screenStream) {
             screenStream.getTracks().forEach(track => {
-                pc.addTrack(track, screenStream);
+                const sender = pc.addTrack(track, screenStream);
+                localTracks.push(sender);
             });
         }
         
@@ -215,25 +287,53 @@ document.addEventListener('DOMContentLoaded', () => {
         pc.onicecandidate = (event) => {
             if (event.candidate) {
                 socket.emit('ice-candidate', event.candidate, userId);
+                console.log('Sending ICE candidate to', userId);
             }
         };
         
-        // Handle incoming media streams
+        // Connection state logging
+        pc.oniceconnectionstatechange = () => {
+            console.log(`ICE connection state with ${userId}: ${pc.iceConnectionState}`);
+            
+            // If connection fails, try to restart ICE
+            if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                console.log('Connection failed, attempting to restart ICE');
+                pc.restartIce();
+            }
+        };
+        
+        // Handle incoming media streams with improved handling
         pc.ontrack = (event) => {
             console.log(`Received track from ${userId}`);
-            addVideoStream(userId, event.streams[0]);
+            
+            if (event.streams && event.streams[0]) {
+                const streamId = event.streams[0].id;
+                console.log(`Stream ID: ${streamId}`);
+                
+                // Wait a moment to ensure stream is fully setup
+                setTimeout(() => {
+                    addVideoStream(userId, event.streams[0]);
+                }, 200);
+            }
         };
         
         // Create and send offer if this is the initiator
-        if (localStream || localVideoStream || screenStream) {
-            pc.createOffer()
-                .then(offer => pc.setLocalDescription(offer))
-                .then(() => {
-                    socket.emit('offer', pc.localDescription, userId);
-                })
-                .catch(error => {
-                    console.error('Error creating offer:', error);
-                });
+        if (localTracks.length > 0) {
+            console.log('Creating offer for', userId);
+            pc.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            })
+            .then(offer => {
+                return pc.setLocalDescription(offer);
+            })
+            .then(() => {
+                console.log('Sending offer to', userId);
+                socket.emit('offer', pc.localDescription, userId);
+            })
+            .catch(error => {
+                console.error('Error creating offer:', error);
+            });
         }
         
         return pc;
@@ -247,13 +347,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // Remove any video elements
-        const videoEl = document.getElementById(`video-${userId}`);
-        if (videoEl) {
-            videoEl.remove();
+        const videoContainer = document.getElementById(`video-${userId}`);
+        if (videoContainer) {
+            videoContainer.remove();
         }
     }
 
-    // Add a video stream to the UI
+    // Add a video stream to the UI - improved with fullscreen support
     function addVideoStream(userId, stream) {
         // Check if video container already exists
         let videoContainer = document.getElementById(`video-${userId}`);
@@ -270,21 +370,69 @@ document.addEventListener('DOMContentLoaded', () => {
             // Set user name
             nameEl.textContent = peers[userId] || userId;
             
-            // Set up mute button
+            // Set up controls
             const muteButton = videoContainer.querySelector('.mute-button');
             muteButton.addEventListener('click', () => {
                 videoEl.muted = !videoEl.muted;
-                muteButton.textContent = videoEl.muted ? '🔇' : '🔊';
+                muteButton.innerHTML = videoEl.muted ? 
+                    '<i class="fas fa-volume-mute"></i>' : 
+                    '<i class="fas fa-volume-up"></i>';
             });
+            
+            // Add fullscreen button (already in template)
+            const fullscreenButton = videoContainer.querySelector('.fullscreen-button');
+            fullscreenButton.addEventListener('click', () => toggleFullscreen(videoEl));
             
             videoGrid.appendChild(videoContainer);
         }
         
         const videoEl = videoContainer.querySelector('.user-video');
+        
+        // Handle stream replacement if already exists
+        if (videoEl.srcObject && videoEl.srcObject.id !== stream.id) {
+            console.log(`Replacing stream for user ${userId}`);
+        }
+        
         videoEl.srcObject = stream;
+        
+        // Set video properties
+        videoEl.playsInline = true;
+        videoEl.autoplay = true;
+        
+        // Handle play errors
         videoEl.play().catch(error => {
             console.error('Error playing video:', error);
+            // Try again with user interaction
+            videoEl.addEventListener('click', () => {
+                videoEl.play();
+            });
         });
+        
+        // Double-click for fullscreen
+        videoEl.addEventListener('dblclick', () => {
+            toggleFullscreen(videoEl);
+        });
+    }
+
+    // Toggle fullscreen function
+    function toggleFullscreen(element) {
+        if (!document.fullscreenElement) {
+            if (element.requestFullscreen) {
+                element.requestFullscreen();
+            } else if (element.webkitRequestFullscreen) { /* Safari */
+                element.webkitRequestFullscreen();
+            } else if (element.msRequestFullscreen) { /* IE11 */
+                element.msRequestFullscreen();
+            }
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) { /* Safari */
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) { /* IE11 */
+                document.msExitFullscreen();
+            }
+        }
     }
 
     // Add a message to the UI
@@ -294,6 +442,10 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (message.sender === currentUser) {
             messageElement.classList.add('sent');
+        }
+        
+        if (message.sender === 'System') {
+            messageElement.classList.add('system');
         }
         
         const senderElement = document.createElement('div');
@@ -344,6 +496,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const nameSpan = document.createElement('span');
             nameSpan.textContent = name;
             
+            // Handle special styling for current user
+            if (userId === socket.id) {
+                nameSpan.textContent = `${name} (You)`;
+                nameSpan.style.fontWeight = 'bold';
+            }
+            
             userItem.appendChild(statusDot);
             userItem.appendChild(nameSpan);
             
@@ -356,7 +514,14 @@ document.addEventListener('DOMContentLoaded', () => {
         delete peers[userId];
         const userItem = document.getElementById(`user-${userId}`);
         if (userItem) {
-            userItem.remove();
+            // Animate removal
+            userItem.style.opacity = '0';
+            userItem.style.height = '0';
+            
+            // Remove after animation
+            setTimeout(() => {
+                userItem.remove();
+            }, 300);
         }
     }
 
@@ -406,13 +571,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Create peer connections with existing users
                 Object.keys(peers).forEach(userId => {
-                    if (!peerConnections[userId]) {
-                        createPeerConnection(userId);
-                    } else {
-                        // If connection exists, add tracks
-                        localStream.getTracks().forEach(track => {
-                            peerConnections[userId].addTrack(track, localStream);
-                        });
+                    if (userId !== socket.id) { // Don't create connection to self
+                        if (!peerConnections[userId]) {
+                            createPeerConnection(userId);
+                        } else {
+                            // If connection exists, add tracks
+                            localStream.getTracks().forEach(track => {
+                                peerConnections[userId].addTrack(track, localStream);
+                            });
+                        }
                     }
                 });
             } catch (error) {
@@ -464,13 +631,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Create peer connections with existing users
                 Object.keys(peers).forEach(userId => {
-                    if (!peerConnections[userId]) {
-                        createPeerConnection(userId);
-                    } else {
-                        // If connection exists, add tracks
-                        localVideoStream.getTracks().forEach(track => {
-                            peerConnections[userId].addTrack(track, localVideoStream);
-                        });
+                    if (userId !== socket.id) { // Don't create connection to self
+                        if (!peerConnections[userId]) {
+                            createPeerConnection(userId);
+                        } else {
+                            // If connection exists, add tracks
+                            localVideoStream.getTracks().forEach(track => {
+                                peerConnections[userId].addTrack(track, localVideoStream);
+                            });
+                        }
                     }
                 });
             } catch (error) {
@@ -489,13 +658,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 screenStream = null;
             }
             
+            // Remove screen video display
+            const screenContainer = document.getElementById('video-screen-local');
+            if (screenContainer) {
+                screenContainer.remove();
+            }
+            
             isScreenSharing = false;
             shareScreenButton.classList.remove('active');
             addSystemMessage('Screen sharing stopped');
         } else {
             // Start screen sharing
             try {
-                screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: {
+                        cursor: "always",
+                        displaySurface: "monitor"
+                    },
+                    audio: false
+                });
                 isScreenSharing = true;
                 shareScreenButton.classList.add('active');
                 addSystemMessage('Screen sharing started');
@@ -521,13 +702,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Create peer connections with existing users
                 Object.keys(peers).forEach(userId => {
-                    if (!peerConnections[userId]) {
-                        createPeerConnection(userId);
-                    } else {
-                        // If connection exists, add tracks
-                        screenStream.getTracks().forEach(track => {
-                            peerConnections[userId].addTrack(track, screenStream);
-                        });
+                    if (userId !== socket.id) { // Don't create connection to self
+                        if (!peerConnections[userId]) {
+                            createPeerConnection(userId);
+                        } else {
+                            // If connection exists, add tracks
+                            screenStream.getTracks().forEach(track => {
+                                peerConnections[userId].addTrack(track, screenStream);
+                            });
+                        }
                     }
                 });
             } catch (error) {
@@ -536,4 +719,20 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
+    
+    // Update CSS for system messages
+    const style = document.createElement('style');
+    style.textContent = `
+        .message.system {
+            background-color: rgba(88, 101, 242, 0.1);
+            border-left: 3px solid var(--discord-primary);
+            padding-left: 12px;
+            max-width: 100%;
+            margin-bottom: 10px;
+        }
+        .message.system .sender {
+            color: var(--discord-primary);
+        }
+    `;
+    document.head.appendChild(style);
 }); 
