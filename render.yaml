@@ -2,7 +2,7 @@ services:
   - type: web
     name: diskurt
     env: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run install:all && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
